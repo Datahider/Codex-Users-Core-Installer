@@ -3,23 +3,50 @@
 
 declare(strict_types=1);
 
-const USAGE = 'Usage: php bin/install-tenant.php /path/to/tenant.ini';
+const CONFIG_TEMPLATE = <<<'INI'
+username=natali
+telegram_chat_id=-1003979829950
+transcription_api_key=sk-...
+INI;
+
+const HELP = <<<'TEXT'
+Usage:
+  php bin/install-tenant.php /path/to/tenant.ini
+  php bin/install-tenant.php --create /path/to/tenant.ini
+  php bin/install-tenant.php -c /path/to/tenant.ini
+
+INI structure:
+username=natali
+telegram_chat_id=-1003979829950
+transcription_api_key=sk-...
+TEXT;
+
+if (count($argv) === 1) {
+    fwrite(STDERR, HELP . PHP_EOL);
+    exit(1);
+}
 
 if (($argv[1] ?? null) === '--help' && count($argv) === 2) {
-    fwrite(STDOUT, USAGE . PHP_EOL);
+    fwrite(STDOUT, HELP . PHP_EOL);
     exit(0);
 }
 
+$create = in_array(($argv[1] ?? null), ['-c', '--create'], true);
 $validate_only = ($argv[1] ?? null) === '--validate';
-$config_path = $validate_only ? ($argv[2] ?? null) : ($argv[1] ?? null);
-$expected_count = $validate_only ? 3 : 2;
+$config_path = ($validate_only || $create) ? ($argv[2] ?? null) : ($argv[1] ?? null);
+$expected_count = ($validate_only || $create) ? 3 : 2;
 
 if (count($argv) !== $expected_count || !is_string($config_path) || $config_path === '') {
-    fwrite(STDERR, USAGE . PHP_EOL);
+    fwrite(STDERR, HELP . PHP_EOL);
     exit(1);
 }
 
 try {
+    if ($create) {
+        createConfigTemplate($config_path);
+        exit(0);
+    }
+
     $input = loadInput($config_path);
 
     if ($validate_only) {
@@ -31,6 +58,30 @@ try {
 } catch (Throwable $exception) {
     fwrite(STDERR, 'Tenant installation failed: ' . $exception->getMessage() . PHP_EOL);
     exit(1);
+}
+
+function createConfigTemplate(string $config_path): void
+{
+    if (file_exists($config_path)) {
+        throw new RuntimeException("Refusing to overwrite existing file: $config_path");
+    }
+
+    $handle = fopen($config_path, 'x');
+    if ($handle === false) {
+        throw new RuntimeException("Cannot create INI file: $config_path");
+    }
+
+    $written = fwrite($handle, CONFIG_TEMPLATE . PHP_EOL);
+    if ($written !== strlen(CONFIG_TEMPLATE . PHP_EOL)) {
+        fclose($handle);
+        throw new RuntimeException("Cannot write complete INI file: $config_path");
+    }
+
+    if (!fclose($handle)) {
+        throw new RuntimeException("Cannot close INI file: $config_path");
+    }
+
+    fwrite(STDOUT, "Created tenant config: $config_path\n");
 }
 
 /**
