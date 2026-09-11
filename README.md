@@ -50,6 +50,7 @@ transcription_api_key=<transcription_api_key>
 - клонировать `Datahider/Codex-Users-Core` из remote в `/home/USERNAME/Codex-Users-Core`;
 - установить production Composer-зависимости;
 - создать config с отдельным случайным `core_token`, переданным API key и `--dangerously-bypass-approvals-and-sandbox`;
+- записать в config закомментированные настройки порогов лимитов с фактическими значениями по умолчанию: `5%` для 5 часов и `1%` для 7 дней;
 - не копировать и не изменять Codex-авторизацию;
 - записать tenant и SHA-256 core token в production Router;
 - записать `TELEGRAM_CHAT_ID -> USERNAME` в production Transport-Telegram;
