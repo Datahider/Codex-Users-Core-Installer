@@ -42,14 +42,6 @@ function loadInput(string $config_path): array
         throw new RuntimeException('INI file must exist and be readable');
     }
 
-    if (fileowner($config_path) !== posix_geteuid()) {
-        throw new RuntimeException('INI file must belong to the current user');
-    }
-
-    if ((fileperms($config_path) & 0777) !== 0600) {
-        throw new RuntimeException('INI file permissions must be exactly 0600');
-    }
-
     $input = parse_ini_file($config_path, false, INI_SCANNER_RAW);
     if (!is_array($input)) {
         throw new RuntimeException('Cannot parse INI file');
