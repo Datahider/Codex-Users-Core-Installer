@@ -19,6 +19,15 @@ php bin/install-tenant.php -c /home/web/tmp/tenant.ini
 
 Существующий файл эта команда не перезаписывает.
 
+Обновить уже установленный Core:
+
+```bash
+php bin/install-tenant.php --update USERNAME
+php bin/install-tenant.php -u USERNAME
+```
+
+Обновление обязано отказаться при изменённых tracked-файлах. При чистом дереве оно выполняет `git pull --ff-only`, повторно устанавливает production-зависимости, перезапускает и проверяет service. Персональный config, runtime-данные, Router и Telegram-привязки не изменяются.
+
 INI-файл должен существовать и быть доступен на чтение. Владелец и режим файла не входят в контракт установщика:
 
 ```ini
@@ -34,6 +43,7 @@ transcription_api_key=<transcription_api_key>
 - принять единственным параметром путь к INI-файлу;
 - показывать без параметров и с `--help` usage, пример INI и `-c|--create PATH`;
 - по `-c|--create PATH` создавать новый INI-шаблон и отказываться перезаписывать существующий файл;
+- по `-u|--update USERNAME` проверять tracked-файлы Core, выполнять только fast-forward update, обновлять Composer-зависимости и перезапускать service;
 - отклонить несуществующий или нечитаемый файл, неизвестные или невалидные поля;
 - не передавать `transcription_api_key` в command-line arguments;
 - создать Linux-пользователя штатной командой ограниченного sudo;
