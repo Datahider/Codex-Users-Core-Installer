@@ -4,9 +4,9 @@
 declare(strict_types=1);
 
 const CONFIG_TEMPLATE = <<<'INI'
-username=natali
-telegram_chat_id=-1003979829950
-transcription_api_key=sk-...
+username=<username>
+telegram_chat_id=<telegram_chat_id>
+transcription_api_key=<transcription_api_key>
 INI;
 
 const HELP = <<<'TEXT'
@@ -16,9 +16,9 @@ Usage:
   php bin/install-tenant.php -c /path/to/tenant.ini
 
 INI structure:
-username=natali
-telegram_chat_id=-1003979829950
-transcription_api_key=sk-...
+username=<username>
+telegram_chat_id=<telegram_chat_id>
+transcription_api_key=<transcription_api_key>
 TEXT;
 
 if (count($argv) === 1) {
