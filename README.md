@@ -22,9 +22,9 @@ php bin/install-tenant.php -c /home/web/tmp/tenant.ini
 INI-файл должен существовать и быть доступен на чтение. Владелец и режим файла не входят в контракт установщика:
 
 ```ini
-username=natali
-telegram_chat_id=-1003979829950
-transcription_api_key=sk-...
+username=<username>
+telegram_chat_id=<telegram_chat_id>
+transcription_api_key=<transcription_api_key>
 ```
 
 ## Контракт
