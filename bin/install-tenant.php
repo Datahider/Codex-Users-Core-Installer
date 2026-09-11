@@ -14,6 +14,8 @@ Usage:
   php bin/install-tenant.php /path/to/tenant.ini
   php bin/install-tenant.php --create /path/to/tenant.ini
   php bin/install-tenant.php -c /path/to/tenant.ini
+  php bin/install-tenant.php --update USERNAME
+  php bin/install-tenant.php -u USERNAME
 
 INI structure:
 username=<username>
@@ -32,9 +34,10 @@ if (($argv[1] ?? null) === '--help' && count($argv) === 2) {
 }
 
 $create = in_array(($argv[1] ?? null), ['-c', '--create'], true);
+$update = in_array(($argv[1] ?? null), ['-u', '--update'], true);
 $validate_only = ($argv[1] ?? null) === '--validate';
-$config_path = ($validate_only || $create) ? ($argv[2] ?? null) : ($argv[1] ?? null);
-$expected_count = ($validate_only || $create) ? 3 : 2;
+$config_path = ($validate_only || $create || $update) ? ($argv[2] ?? null) : ($argv[1] ?? null);
+$expected_count = ($validate_only || $create || $update) ? 3 : 2;
 
 if (count($argv) !== $expected_count || !is_string($config_path) || $config_path === '') {
     fwrite(STDERR, HELP . PHP_EOL);
@@ -42,6 +45,12 @@ if (count($argv) !== $expected_count || !is_string($config_path) || $config_path
 }
 
 try {
+    if ($update) {
+        validateUsername($config_path);
+        updateTenant($config_path);
+        exit(0);
+    }
+
     if ($create) {
         createConfigTemplate($config_path);
         exit(0);
@@ -109,9 +118,7 @@ function loadInput(string $config_path): array
     $telegram_chat_id = trim((string) $input['telegram_chat_id']);
     $transcription_api_key = trim((string) $input['transcription_api_key']);
 
-    if (preg_match('/^[a-z_][a-z0-9_-]{0,31}$/', $username) !== 1) {
-        throw new RuntimeException('Invalid username');
-    }
+    validateUsername($username);
     if (preg_match('/^-?[1-9][0-9]*$/', $telegram_chat_id) !== 1) {
         throw new RuntimeException('Invalid Telegram chat ID');
     }
@@ -124,6 +131,32 @@ function loadInput(string $config_path): array
         'telegram_chat_id' => $telegram_chat_id,
         'transcription_api_key' => $transcription_api_key,
     ];
+}
+
+function validateUsername(string $username): void
+{
+    if (preg_match('/^[a-z_][a-z0-9_-]{0,31}$/', $username) !== 1) {
+        throw new RuntimeException('Invalid username');
+    }
+}
+
+function updateTenant(string $username): void
+{
+    $home = '/home/' . $username;
+    $core_dir = $home . '/Codex-Users-Core';
+    $user_script = "set -euo pipefail\n"
+        . "cd " . shellQuote($core_dir) . "\n"
+        . "tracked_changes=\"\$(git status --porcelain --untracked-files=no)\"\n"
+        . "if [ -n \"\$tracked_changes\" ]; then\n"
+        . "    echo 'Core has modified tracked files' >&2\n"
+        . "    exit 1\n"
+        . "fi\n"
+        . "git pull --ff-only\n"
+        . "composer install --no-dev --prefer-dist --no-interaction\n";
+
+    run(['sudo', '/var/tmp/codex-limited-sudo/become-user', $username], $user_script);
+    restartAndVerifyService($username);
+    fwrite(STDOUT, "Tenant updated: $username\n");
 }
 
 /**
@@ -155,17 +188,26 @@ function installTenant(array $input): void
     provisionRouter($router_deploy, $username, $core_token);
     provisionTelegram($telegram_deploy, $username, $input['telegram_chat_id']);
 
+    $service = restartAndVerifyService($username, true);
+
+    fwrite(STDOUT, "Tenant installed: $username\n");
+    fwrite(STDOUT, "Telegram chat ID: {$input['telegram_chat_id']}\n");
+    fwrite(STDOUT, "Service: $service (active)\n");
+}
+
+function restartAndVerifyService(string $username, bool $enable = false): string
+{
     $service = 'codex-core@' . $username . '.service';
-    run(['sudo', '-n', 'systemctl', 'enable', '--now', $service]);
+    if ($enable) {
+        run(['sudo', '-n', 'systemctl', 'enable', '--now', $service]);
+    }
     run(['sudo', '-n', 'systemctl', 'restart', $service]);
     $status = trim(run(['systemctl', 'is-active', $service]));
     if ($status !== 'active') {
         throw new RuntimeException("Service $service is not active");
     }
 
-    fwrite(STDOUT, "Tenant installed: $username\n");
-    fwrite(STDOUT, "Telegram chat ID: {$input['telegram_chat_id']}\n");
-    fwrite(STDOUT, "Service: $service ($status)\n");
+    return $service;
 }
 
 /**
