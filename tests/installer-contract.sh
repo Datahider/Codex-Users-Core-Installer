@@ -6,6 +6,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER="$PROJECT_ROOT/bin/install-tenant.php"
 
 test -x "$INSTALLER"
+grep -Fq "// 'primary_remaining_warning_percent' => 5," "$INSTALLER"
+grep -Fq "// 'secondary_remaining_warning_percent' => 1," "$INSTALLER"
 
 help="$($INSTALLER --help)"
 grep -Fq 'install-tenant.php /path/to/tenant.ini' <<<"$help"
