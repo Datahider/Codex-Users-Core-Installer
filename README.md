@@ -8,6 +8,17 @@ Operations-установщик нового single-user Core и его producti
 php bin/install-tenant.php /home/web/tmp/tenant.ini
 ```
 
+Без параметров и с `--help` установщик показывает usage, полный пример INI и команду создания шаблона.
+
+Создать INI-шаблон:
+
+```bash
+php bin/install-tenant.php --create /home/web/tmp/tenant.ini
+php bin/install-tenant.php -c /home/web/tmp/tenant.ini
+```
+
+Существующий файл эта команда не перезаписывает.
+
 INI-файл должен существовать и быть доступен на чтение. Владелец и режим файла не входят в контракт установщика:
 
 ```ini
@@ -21,6 +32,8 @@ transcription_api_key=sk-...
 Установщик обязан:
 
 - принять единственным параметром путь к INI-файлу;
+- показывать без параметров и с `--help` usage, пример INI и `-c|--create PATH`;
+- по `-c|--create PATH` создавать новый INI-шаблон и отказываться перезаписывать существующий файл;
 - отклонить несуществующий или нечитаемый файл, неизвестные или невалидные поля;
 - не передавать `transcription_api_key` в command-line arguments;
 - создать Linux-пользователя штатной командой ограниченного sudo;
