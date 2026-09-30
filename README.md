@@ -2,6 +2,9 @@
 
 Operations-установщик нового single-user Core и его production-привязок.
 
+Концепция публичного self-service и hosted onboarding описана в
+[`SELF_SERVICE_ONBOARDING.md`](SELF_SERVICE_ONBOARDING.md).
+
 ## Запуск
 
 ```bash
