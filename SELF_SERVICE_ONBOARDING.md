@@ -69,24 +69,41 @@
 
 ## Group And Supergroup Binding
 
-1. Telegram присылает `my_chat_member`, когда bot добавлен в group/supergroup.
-2. Transport сохраняет target, Telegram `user_id` инициатора и случайный
-   одноразовый claim token с коротким сроком жизни.
-3. Bot публикует кнопку, открывающую private chat с deep-link claim token.
-4. В private chat Transport проверяет, что claimant имеет Telegram `user_id`
-   инициатора. Если инициатор недоступен или добавление выполнено анонимно,
-   Transport проверяет claimant через `getChatMember` и принимает только
-   `creator` или `administrator`.
-5. Claimant выбирает одно из своих оплаченных и готовых Core.
-6. Onboarding атомарно создаёт binding target -> `core_id` и погашает token.
-7. Bot сообщает результат и в private chat, и в группе.
+1. В private chat владелец выбирает оплаченный и готовый Core и запрашивает
+   group pairing code.
+2. Onboarding создаёт cryptographically random 256-bit token, представленный
+   в URL-safe Base64 без padding. Token действует 15 минут и разрешает не более
+   10 успешных привязок.
+3. Владелец добавляет bot в нужные groups/supergroups и отправляет token обычным
+   сообщением или аргументом команды `/pair`.
+4. Transport передаёт token и target identity в Onboarding.
+5. Onboarding проверяет hash token, срок, лимит использований, активность
+   подписки и готовность выбранного Core.
+6. Onboarding атомарно создаёт новый binding target -> `core_id` и увеличивает
+   счётчик использований token. Token не погашается после первой привязки.
+7. Transport удаляет сообщение с token, если Telegram разрешает удаление, и
+   публикует подтверждение без повторения token.
+8. После каждой успешной привязки bot немедленно сообщает владельцу в private
+   chat название и Telegram ID группы и показывает действие для её отвязки.
 
-Публичный код без проверки Telegram identity запрещён: любой участник группы
-мог бы украсть такой код и привязать группу к своему Core.
+Group pairing token является временным bearer capability. Telegram identity
+отправителя в группе не доказывает владение Core и отдельно не проверяется:
+право на привязку подтверждается самим token.
 
-Повторное добавление bot не меняет существующий binding. Перепривязка группы
-требует отдельной команды, действующего администратора и подтверждения в
-private chat.
+В базе хранится только cryptographic hash token. Полное значение не попадает в
+логи, ошибки или повторные ответы bot. Проверка и увеличение счётчика
+выполняются одной транзакцией, поэтому параллельные запросы не могут превысить
+лимит 10 привязок.
+
+Token разрешает только создание нового binding. Он не может переписать уже
+существующий binding, отвязать target, управлять Core или выпускать Router
+credentials. Повторное добавление bot также не меняет binding. Перепривязка
+группы требует отдельной явной операции.
+
+Компрометация token в пределах 15 минут позволяет привязать чужую группу к
+Core владельца. Риск ограничивается лимитом использований, немедленным private
+уведомлением, просмотром списка bindings и доступной владельцу отвязкой. После
+истечения срока или достижения лимита token становится недействительным.
 
 ## Subscription And Routing Rules
 
@@ -117,7 +134,7 @@ private chat.
 
 - `Transport-Telegram`:
   - принимает Telegram updates;
-  - подтверждает Telegram identity и group administrator status;
+  - передаёт Telegram identity и предъявленный group pairing token;
   - показывает onboarding UI;
   - не принимает решения об оплате и не создаёт Router core tokens.
 - `Onboarding`:
@@ -146,9 +163,13 @@ private chat.
 
 `created -> paid | expired | cancelled`
 
-`pairing_code` and `group_claim`:
+`core_pairing_code`:
 
 `active -> consumed | expired`
+
+`group_pairing_token`:
+
+`active -> exhausted | expired | revoked`
 
 Переходы выполняются атомарно. Повтор события не создаёт второй Core, invoice,
 token или binding.
@@ -161,7 +182,7 @@ token или binding.
 4. One-time Core pairing and Router token issue.
 5. Core heartbeat and `ready` state.
 6. Unlimited private/group bindings to that Core.
-7. Group claim through private chat with administrator verification.
+7. Reusable group pairing token: 15 minutes, at most 10 new bindings.
 8. Forum topics routed automatically through their parent group binding.
 
 Hosted provisioning, recurrent charges and multiple-Core selection follow after
