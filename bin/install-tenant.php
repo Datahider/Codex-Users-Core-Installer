@@ -3,389 +3,243 @@
 
 declare(strict_types=1);
 
-const CONFIG_TEMPLATE = <<<'INI'
-username=<username>
-telegram_chat_id=<telegram_chat_id>
-transcription_api_key=<transcription_api_key>
-INI;
-
+const ROUTER_INSTALL_URL = 'https://cdx-router.botmeister.ru/api/v1/core/install';
+const CORE_REPOSITORY_URL = 'https://github.com/Datahider/Codex-Users-Core.git';
 const HELP = <<<'TEXT'
 Usage:
-  php bin/install-tenant.php /path/to/tenant.ini
-  php bin/install-tenant.php --create /path/to/tenant.ini
-  php bin/install-tenant.php -c /path/to/tenant.ini
-  php bin/install-tenant.php --update USERNAME
-  php bin/install-tenant.php -u USERNAME
+  sudo php bin/install-tenant.php --pair CODE [--user USERNAME] [--yes]
+  sudo php bin/install-tenant.php --update USERNAME
 
-INI structure:
-username=<username>
-telegram_chat_id=<telegram_chat_id>
-transcription_api_key=<transcription_api_key>
+Options:
+  --pair CODE       One-time code from the CodexGate Telegram bot
+  --user USERNAME   Linux user for Core (default: codex)
+  --yes             Accept user creation or reuse without a prompt
+  --update USERNAME Update an installed Core
 TEXT;
 
 if (count($argv) === 1) {
     fwrite(STDERR, HELP . PHP_EOL);
     exit(1);
 }
-
-if (($argv[1] ?? null) === '--help' && count($argv) === 2) {
+if (($argv[1] ?? '') === '--help' && count($argv) === 2) {
     fwrite(STDOUT, HELP . PHP_EOL);
     exit(0);
 }
 
-$create = in_array(($argv[1] ?? null), ['-c', '--create'], true);
-$update = in_array(($argv[1] ?? null), ['-u', '--update'], true);
-$validate_only = ($argv[1] ?? null) === '--validate';
-$config_path = ($validate_only || $create || $update) ? ($argv[2] ?? null) : ($argv[1] ?? null);
-$expected_count = ($validate_only || $create || $update) ? 3 : 2;
-
-if (count($argv) !== $expected_count || !is_string($config_path) || $config_path === '') {
-    fwrite(STDERR, HELP . PHP_EOL);
-    exit(1);
-}
-
 try {
-    if ($update) {
-        validateUsername($config_path);
-        updateTenant($config_path);
-        exit(0);
+    $arguments = parseArguments(array_slice($argv, 1));
+    requireRoot();
+    if ($arguments['mode'] === 'update') {
+        updateCore($arguments['username']);
+    } else {
+        installCore($arguments['pairing_code'], $arguments['username'], $arguments['yes']);
     }
-
-    if ($create) {
-        createConfigTemplate($config_path);
-        exit(0);
-    }
-
-    $input = loadInput($config_path);
-
-    if ($validate_only) {
-        fwrite(STDOUT, "Tenant installer config: OK\n");
-        exit(0);
-    }
-
-    installTenant($input);
 } catch (Throwable $exception) {
-    fwrite(STDERR, 'Tenant installation failed: ' . $exception->getMessage() . PHP_EOL);
+    fwrite(STDERR, 'Core installation failed: ' . $exception->getMessage() . PHP_EOL);
     exit(1);
 }
 
-function createConfigTemplate(string $config_path): void
+/** @return array{mode:string,pairing_code:string,username:?string,yes:bool} */
+function parseArguments(array $arguments): array
 {
-    if (file_exists($config_path)) {
-        throw new RuntimeException("Refusing to overwrite existing file: $config_path");
+    if (($arguments[0] ?? '') === '--update' && count($arguments) === 2) {
+        validateUsername((string) $arguments[1]);
+        return ['mode' => 'update', 'pairing_code' => '', 'username' => (string) $arguments[1], 'yes' => true];
     }
 
-    $handle = fopen($config_path, 'x');
-    if ($handle === false) {
-        throw new RuntimeException("Cannot create INI file: $config_path");
+    $pairing_code = null;
+    $username = null;
+    $yes = false;
+    for ($index = 0; $index < count($arguments); $index++) {
+        $argument = $arguments[$index];
+        if ($argument === '--yes') {
+            $yes = true;
+            continue;
+        }
+        if (in_array($argument, ['--pair', '--user'], true)) {
+            $value = $arguments[++$index] ?? null;
+            if (!is_string($value) || $value === '') throw new RuntimeException("Missing value for $argument");
+            if ($argument === '--pair') $pairing_code = normalizePairingCode($value);
+            else $username = $value;
+            continue;
+        }
+        throw new RuntimeException("Unknown argument: $argument");
     }
-
-    $written = fwrite($handle, CONFIG_TEMPLATE . PHP_EOL);
-    if ($written !== strlen(CONFIG_TEMPLATE . PHP_EOL)) {
-        fclose($handle);
-        throw new RuntimeException("Cannot write complete INI file: $config_path");
-    }
-
-    if (!fclose($handle)) {
-        throw new RuntimeException("Cannot close INI file: $config_path");
-    }
-
-    fwrite(STDOUT, "Created tenant config: $config_path\n");
+    if ($pairing_code === null) throw new RuntimeException('--pair is required');
+    if ($username !== null) validateUsername($username);
+    return ['mode' => 'install', 'pairing_code' => $pairing_code, 'username' => $username, 'yes' => $yes];
 }
 
-/**
- * @return array{username:string,telegram_chat_id:string,transcription_api_key:string}
- */
-function loadInput(string $config_path): array
+function normalizePairingCode(string $code): string
 {
-    if (!is_file($config_path) || !is_readable($config_path)) {
-        throw new RuntimeException('INI file must exist and be readable');
+    $normalized = strtoupper(str_replace('-', '', trim($code)));
+    if (preg_match('/^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{16}$/', $normalized) !== 1) {
+        throw new RuntimeException('Invalid pairing code');
     }
+    return $normalized;
+}
 
-    $input = parse_ini_file($config_path, false, INI_SCANNER_RAW);
-    if (!is_array($input)) {
-        throw new RuntimeException('Cannot parse INI file');
+function requireRoot(): void
+{
+    if (!function_exists('posix_geteuid') || !function_exists('posix_getpwnam')) {
+        throw new RuntimeException('PHP POSIX extension is required');
     }
-
-    $expected_keys = ['telegram_chat_id', 'transcription_api_key', 'username'];
-    $actual_keys = array_keys($input);
-    sort($actual_keys);
-    if ($actual_keys !== $expected_keys) {
-        throw new RuntimeException('INI file must contain only username, telegram_chat_id and transcription_api_key');
+    if (posix_geteuid() !== 0) {
+        throw new RuntimeException('Installer must be run as root');
     }
+}
 
-    $username = trim((string) $input['username']);
-    $telegram_chat_id = trim((string) $input['telegram_chat_id']);
-    $transcription_api_key = trim((string) $input['transcription_api_key']);
+function installCore(string $pairing_code, ?string $username, bool $yes): void
+{
+    foreach (['git', 'composer', 'codex', 'systemctl', 'runuser', 'useradd'] as $command) requireCommand($command);
+    if (PHP_VERSION_ID < 80200) throw new RuntimeException('PHP 8.2 or newer is required');
+    if (!function_exists('curl_init')) throw new RuntimeException('PHP curl extension is required');
 
+    $username ??= prompt('Linux user [codex]: ', 'codex');
     validateUsername($username);
-    if (preg_match('/^-?[1-9][0-9]*$/', $telegram_chat_id) !== 1) {
-        throw new RuntimeException('Invalid Telegram chat ID');
-    }
-    if ($transcription_api_key === '') {
-        throw new RuntimeException('Transcription API key cannot be empty');
+    $home = '/home/' . $username;
+    $existing = posix_getpwnam($username);
+    if ($existing === false) {
+        if (!$yes && !confirm("Create Linux user $username with home $home?")) throw new RuntimeException('Installation cancelled');
+        run(['useradd', '--create-home', '--home-dir', $home, '--shell', '/bin/bash', $username]);
+    } else {
+        if (($existing['dir'] ?? null) !== $home) throw new RuntimeException("User $username must use home $home");
+        if (!$yes && !confirm("Use existing Linux user $username with home $home?")) throw new RuntimeException('Installation cancelled');
     }
 
-    return [
-        'username' => $username,
-        'telegram_chat_id' => $telegram_chat_id,
-        'transcription_api_key' => $transcription_api_key,
-    ];
+    $core_dir = $home . '/Codex-Users-Core';
+    if (file_exists($core_dir)) throw new RuntimeException("Core directory already exists: $core_dir");
+    runAsUser($username, ['git', 'clone', CORE_REPOSITORY_URL, $core_dir]);
+    runAsUser($username, ['composer', 'install', '--working-dir=' . $core_dir, '--no-dev', '--prefer-dist', '--no-interaction']);
+
+    $credentials = exchangePairingCode($pairing_code);
+    try {
+        writeCoreConfig($username, $home, $credentials['core_token']);
+        installUnitTemplate();
+        run(['systemctl', 'daemon-reload']);
+        $service = 'codex-core@' . $username . '.service';
+        run(['systemctl', 'enable', '--now', $service]);
+        $status = trim(run(['systemctl', 'is-active', $service]));
+        if ($status !== 'active') throw new RuntimeException("Service $service is not active");
+    } catch (Throwable $exception) {
+        throw new RuntimeException('Pairing code was consumed; request a new code with /install before retrying. ' . $exception->getMessage(), 0, $exception);
+    }
+
+    fwrite(STDOUT, "Core installed for user: $username\n");
+    fwrite(STDOUT, "Tenant: {$credentials['tenant']}\n");
+    fwrite(STDOUT, "Run Codex authorization for this user: runuser -u $username -- codex\n");
+}
+
+function updateCore(string $username): void
+{
+    validateUsername($username);
+    $home = '/home/' . $username;
+    $core_dir = $home . '/Codex-Users-Core';
+    if (posix_getpwnam($username) === false || !is_dir($core_dir)) throw new RuntimeException('Installed Core not found');
+    $changes = trim(runAsUser($username, ['git', '-C', $core_dir, 'status', '--porcelain', '--untracked-files=no']));
+    if ($changes !== '') throw new RuntimeException('Core has modified tracked files');
+    runAsUser($username, ['git', '-C', $core_dir, 'pull', '--ff-only']);
+    runAsUser($username, ['composer', 'install', '--working-dir=' . $core_dir, '--no-dev', '--prefer-dist', '--no-interaction']);
+    installUnitTemplate();
+    run(['systemctl', 'daemon-reload']);
+    $service = 'codex-core@' . $username . '.service';
+    run(['systemctl', 'restart', $service]);
+    if (trim(run(['systemctl', 'is-active', $service])) !== 'active') throw new RuntimeException("Service $service is not active");
+    fwrite(STDOUT, "Core updated for user: $username\n");
+}
+
+/** @return array{tenant:string,core_token:string} */
+function exchangePairingCode(string $pairing_code): array
+{
+    $handle = curl_init(ROUTER_INSTALL_URL);
+    if ($handle === false) throw new RuntimeException('Cannot initialize Router request');
+    curl_setopt_array($handle, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $pairing_code, 'Content-Type: application/json'],
+        CURLOPT_POSTFIELDS => '{}',
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT => 30,
+    ]);
+    $raw = curl_exec($handle);
+    if ($raw === false) throw new RuntimeException('Router request failed: ' . curl_error($handle));
+    $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+    $response = json_decode((string) $raw, true);
+    if ($status !== 200 || !is_array($response)) throw new RuntimeException('Pairing code is invalid, expired or already used');
+    $tenant = trim((string) ($response['tenant'] ?? ''));
+    $core_token = trim((string) ($response['core_token'] ?? ''));
+    if ($tenant === '' || preg_match('/^[a-f0-9]{96}$/', $core_token) !== 1) throw new RuntimeException('Router returned invalid Core credentials');
+    return ['tenant' => $tenant, 'core_token' => $core_token];
+}
+
+function writeCoreConfig(string $username, string $home, string $core_token): void
+{
+    $directory = $home . '/.codex-users-core';
+    if (!is_dir($directory) && !mkdir($directory, 0700, true)) throw new RuntimeException("Cannot create $directory");
+    $config = "<?php\n\nreturn " . var_export([
+        'codex' => ['bin' => 'codex', 'cwd' => $home, 'extra_args' => ['--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '--json']],
+        'limits' => [],
+        'router' => ['base_url' => 'https://cdx-router.botmeister.ru', 'core_token' => $core_token],
+        'storage' => ['root' => $home . '/var/codex-users-core'],
+    ], true) . ";\n";
+    $path = $directory . '/config.php';
+    if (file_put_contents($path, $config, LOCK_EX) === false || !chmod($path, 0600)) throw new RuntimeException("Cannot write $path");
+    $account = posix_getpwnam($username);
+    if ($account === false || !chown($directory, (int) $account['uid']) || !chgrp($directory, (int) $account['gid']) || !chown($path, (int) $account['uid']) || !chgrp($path, (int) $account['gid'])) {
+        throw new RuntimeException('Cannot assign Core config ownership');
+    }
+}
+
+function installUnitTemplate(): void
+{
+    $source = dirname(__DIR__) . '/systemd/codex-core@.service';
+    $target = '/etc/systemd/system/codex-core@.service';
+    $contents = file_get_contents($source);
+    if ($contents === false || file_put_contents($target, $contents, LOCK_EX) === false || !chmod($target, 0644)) throw new RuntimeException('Cannot install systemd unit template');
+}
+
+function requireCommand(string $command): void
+{
+    run(['sh', '-c', 'command -v -- "$1" >/dev/null', 'sh', $command]);
+}
+
+function runAsUser(string $username, array $command): string
+{
+    return run(array_merge(['runuser', '-u', $username, '--'], $command));
 }
 
 function validateUsername(string $username): void
 {
-    if (preg_match('/^[a-z_][a-z0-9_-]{0,31}$/', $username) !== 1) {
-        throw new RuntimeException('Invalid username');
-    }
+    if (preg_match('/^[a-z_][a-z0-9_-]{0,31}$/', $username) !== 1) throw new RuntimeException('Invalid username');
 }
 
-function updateTenant(string $username): void
+function prompt(string $message, string $default): string
 {
-    $home = '/home/' . $username;
-    $core_dir = $home . '/Codex-Users-Core';
-    $user_script = "set -euo pipefail\n"
-        . "cd " . shellQuote($core_dir) . "\n"
-        . "tracked_changes=\"\$(git status --porcelain --untracked-files=no)\"\n"
-        . "if [ -n \"\$tracked_changes\" ]; then\n"
-        . "    echo 'Core has modified tracked files' >&2\n"
-        . "    exit 1\n"
-        . "fi\n"
-        . "git pull --ff-only\n"
-        . "composer install --no-dev --prefer-dist --no-interaction\n";
-
-    run(['sudo', '/var/tmp/codex-limited-sudo/become-user', $username], $user_script);
-    restartAndVerifyService($username);
-    fwrite(STDOUT, "Tenant updated: $username\n");
+    fwrite(STDOUT, $message);
+    $value = fgets(STDIN);
+    if ($value === false) throw new RuntimeException('Interactive input is unavailable; use --user and --yes');
+    $value = trim($value);
+    return $value === '' ? $default : $value;
 }
 
-/**
- * @param array{username:string,telegram_chat_id:string,transcription_api_key:string} $input
- */
-function installTenant(array $input): void
+function confirm(string $message): bool
 {
-    $project_root = dirname(__DIR__);
-    $family_root = dirname($project_root);
-    $router_deploy = loadDeployConfig($family_root . '/Router/deploy.env');
-    $telegram_deploy = loadDeployConfig($family_root . '/Transport-Telegram/deploy.env');
-
-    $username = $input['username'];
-    $home = '/home/' . $username;
-    $core_dir = $home . '/Codex-Users-Core';
-    $core_token = bin2hex(random_bytes(24));
-
-    run(['sudo', '/var/tmp/codex-limited-sudo/create-user', $username]);
-
-    $user_script = buildUserInstallScript(
-        $username,
-        $home,
-        $core_dir,
-        $core_token,
-        $input['transcription_api_key']
-    );
-    run(['sudo', '/var/tmp/codex-limited-sudo/become-user', $username], $user_script);
-
-    provisionRouter($router_deploy, $username, $core_token);
-    provisionTelegram($telegram_deploy, $username, $input['telegram_chat_id']);
-
-    $service = restartAndVerifyService($username, true);
-
-    fwrite(STDOUT, "Tenant installed: $username\n");
-    fwrite(STDOUT, "Telegram chat ID: {$input['telegram_chat_id']}\n");
-    fwrite(STDOUT, "Service: $service (active)\n");
-}
-
-function restartAndVerifyService(string $username, bool $enable = false): string
-{
-    $service = 'codex-core@' . $username . '.service';
-    if ($enable) {
-        run(['sudo', '-n', 'systemctl', 'enable', '--now', $service]);
-    }
-    run(['sudo', '-n', 'systemctl', 'restart', $service]);
-    $status = trim(run(['systemctl', 'is-active', $service]));
-    if ($status !== 'active') {
-        throw new RuntimeException("Service $service is not active");
-    }
-
-    return $service;
-}
-
-/**
- * @return array<string, string>
- */
-function loadDeployConfig(string $path): array
-{
-    if (!is_file($path) || !is_readable($path)) {
-        throw new RuntimeException("Deploy config is not readable: $path");
-    }
-
-    $config = parse_ini_file($path, false, INI_SCANNER_RAW);
-    if (!is_array($config)) {
-        throw new RuntimeException("Cannot parse deploy config: $path");
-    }
-
-    return array_map(static fn (mixed $value): string => (string) $value, $config);
-}
-
-function buildUserInstallScript(
-    string $username,
-    string $home,
-    string $core_dir,
-    string $core_token,
-    string $transcription_api_key
-): string {
-    $config = "<?php\n\n"
-        . "return [\n"
-        . "    'codex' => [\n"
-        . "        'bin' => 'codex',\n"
-        . "        'cwd' => " . var_export($home, true) . ",\n"
-        . "        'extra_args' => [\n"
-        . "            '--skip-git-repo-check',\n"
-        . "            '--dangerously-bypass-approvals-and-sandbox',\n"
-        . "            '--json',\n"
-        . "        ],\n"
-        . "    ],\n"
-        . "    'limits' => [\n"
-        . "        // 'primary_remaining_warning_percent' => 5,\n"
-        . "        // 'secondary_remaining_warning_percent' => 1,\n"
-        . "    ],\n"
-        . "    'router' => [\n"
-        . "        'base_url' => 'https://cdx-router.botmeister.ru',\n"
-        . "        'core_token' => " . var_export($core_token, true) . ",\n"
-        . "    ],\n"
-        . "    'transcription' => [\n"
-        . "        'api_key' => " . var_export($transcription_api_key, true) . ",\n"
-        . "        'model' => 'gpt-transcribe',\n"
-        . "    ],\n"
-        . "    'storage' => [\n"
-        . "        'root' => " . var_export($home . '/var/codex-users-core', true) . ",\n"
-        . "    ],\n"
-        . "];\n";
-
-    $delimiter = '__CODEX_TENANT_CONFIG_' . bin2hex(random_bytes(8));
-    if (str_contains($config, $delimiter)) {
-        throw new RuntimeException('Generated config delimiter collision');
-    }
-
-    return "set -euo pipefail\n"
-        . "git clone https://github.com/Datahider/Codex-Users-Core.git " . shellQuote($core_dir) . "\n"
-        . "cd " . shellQuote($core_dir) . "\n"
-        . "composer install --no-dev --prefer-dist --no-interaction\n"
-        . "mkdir -p " . shellQuote($home . '/.codex-users-core') . "\n"
-        . "umask 077\n"
-        . "cat > " . shellQuote($home . '/.codex-users-core/config.php') . " <<'$delimiter'\n"
-        . $config
-        . "$delimiter\n"
-        . "php -l " . shellQuote($home . '/.codex-users-core/config.php') . "\n";
-}
-
-/** @param array<string, string> $deploy */
-function provisionRouter(array $deploy, string $username, string $core_token): void
-{
-    $host = requireDeployValue($deploy, 'ROUTER_DEPLOY_HOST');
-    $port = requireDeployValue($deploy, 'ROUTER_DEPLOY_PORT');
-    $user = requireDeployValue($deploy, 'ROUTER_V1_USER');
-    $dir = requireDeployValue($deploy, 'ROUTER_V1_DIR');
-
-    $script = '<?php ' .
-        'require "vendor/autoload.php"; ' .
-        '$config=require "etc/config.php"; ' .
-        '$runtime=new CodexMultitenant\\Router\\RouterRuntime($config); ' .
-        '$runtime->bootstrap(); ' .
-        'try {$tenant=new CodexMultitenant\\Router\\Data\\Tenant(["tenant"=>' . var_export($username, true) . ']);} ' .
-        'catch (Exception $e) {if ((int)$e->getCode()!==-10002) throw $e; ' .
-        '$tenant=new CodexMultitenant\\Router\\Data\\Tenant(); $tenant->tenant=' . var_export($username, true) . ';} ' .
-        '$tenant->core_token_sha256=hash("sha256",' . var_export($core_token, true) . '); ' .
-        '$tenant->write(); echo "Router tenant: ".$tenant->tenant.PHP_EOL;';
-
-    run(sshCommand($port, "$user@$host", "cd " . shellQuote($dir) . ' && php'), $script);
-}
-
-/** @param array<string, string> $deploy */
-function provisionTelegram(array $deploy, string $username, string $telegram_chat_id): void
-{
-    $host = requireDeployValue($deploy, 'TELEGRAM_TRANSPORT_DEPLOY_HOST');
-    $port = requireDeployValue($deploy, 'TELEGRAM_TRANSPORT_DEPLOY_PORT');
-    $user = requireDeployValue($deploy, 'TELEGRAM_TRANSPORT_DEPLOY_USER');
-    $dir = requireDeployValue($deploy, 'TELEGRAM_TRANSPORT_REMOTE_APP_DIR');
-
-    $script = '<?php ' .
-        'require "vendor/autoload.php"; ' .
-        '$config=require "etc/config.php"; $db=$config["db"]; ' .
-        'losthost\\DB\\DB::connect($db["host"],$db["user"],$db["pass"],$db["name"],$db["prefix"]); ' .
-        'try {$binding=new CodexMultitenant\\TransportTelegram\\Data\\ChatTenantBinding(["chat_id"=>' . var_export($telegram_chat_id, true) . ']);} ' .
-        'catch (Exception $e) {if ((int)$e->getCode()!==-10002) throw $e; ' .
-        '$binding=new CodexMultitenant\\TransportTelegram\\Data\\ChatTenantBinding(); ' .
-        '$binding->chat_id=' . var_export($telegram_chat_id, true) . ';} ' .
-        '$binding->tenant=' . var_export($username, true) . '; $binding->write(); ' .
-        'echo "Telegram binding: ".$binding->chat_id." -> ".$binding->tenant.PHP_EOL;';
-
-    run(sshCommand($port, "$user@$host", "cd " . shellQuote($dir) . ' && php'), $script);
-}
-
-/** @return list<string> */
-function sshCommand(string $port, string $remote, string $remote_command): array
-{
-    return [
-        'ssh',
-        '-p', $port,
-        '-o', 'StrictHostKeyChecking=no',
-        '-o', 'UserKnownHostsFile=/dev/null',
-        $remote,
-        $remote_command,
-    ];
-}
-
-/** @param array<string, string> $config */
-function requireDeployValue(array $config, string $key): string
-{
-    $value = trim($config[$key] ?? '');
-    if ($value === '') {
-        throw new RuntimeException("Missing deploy value: $key");
-    }
-
-    return $value;
+    fwrite(STDOUT, $message . ' [y/N] ');
+    $value = fgets(STDIN);
+    if ($value === false) throw new RuntimeException('Interactive input is unavailable; use --yes');
+    return in_array(strtolower(trim($value)), ['y', 'yes'], true);
 }
 
 /** @param list<string> $command */
-function run(array $command, ?string $stdin = null): string
+function run(array $command): string
 {
-    $pipes = [];
-    $process = proc_open(
-        $command,
-        [
-            0 => ['pipe', 'r'],
-            1 => ['pipe', 'w'],
-            2 => ['pipe', 'w'],
-        ],
-        $pipes
-    );
-    if (!is_resource($process)) {
-        throw new RuntimeException('Cannot start command: ' . $command[0]);
-    }
-
-    fwrite($pipes[0], $stdin ?? '');
-    fclose($pipes[0]);
+    $process = proc_open($command, [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    if (!is_resource($process)) throw new RuntimeException('Cannot start command: ' . $command[0]);
     $stdout = stream_get_contents($pipes[1]);
     $stderr = stream_get_contents($pipes[2]);
     fclose($pipes[1]);
     fclose($pipes[2]);
     $exit_code = proc_close($process);
-
-    if ($stdout !== false && $stdout !== '') {
-        fwrite(STDOUT, $stdout);
-    }
-    if ($stderr !== false && $stderr !== '') {
-        fwrite(STDERR, $stderr);
-    }
-    if ($exit_code !== 0) {
-        throw new RuntimeException('Command failed: ' . $command[0] . " (exit $exit_code)");
-    }
-
-    return $stdout === false ? '' : $stdout;
-}
-
-function shellQuote(string $value): string
-{
-    return "'" . str_replace("'", "'\\''", $value) . "'";
+    if ($exit_code !== 0) throw new RuntimeException(trim((string) $stderr) ?: 'Command failed: ' . implode(' ', $command));
+    return (string) $stdout;
 }
