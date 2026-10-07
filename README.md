@@ -1,61 +1,48 @@
-# Codex Multitenant Tenant Installer
+# CodexGate Core Installer
 
-Operations-установщик нового single-user Core и его production-привязок.
+Root-инсталлер single-user Core для CodexGate.
 
-Концепция публичного self-service и hosted onboarding описана в
-[`SELF_SERVICE_ONBOARDING.md`](SELF_SERVICE_ONBOARDING.md).
+## Новая установка
 
-## Запуск
-
-```bash
-php bin/install-tenant.php /home/web/tmp/tenant.ini
-```
-
-Без параметров и с `--help` установщик показывает usage, полный пример INI и команду создания шаблона.
-
-Создать INI-шаблон:
+Pairing-код выдаёт `@cdxgate_bot` после Start или `/install`. Код действует 3 часа.
 
 ```bash
-php bin/install-tenant.php --create /home/web/tmp/tenant.ini
-php bin/install-tenant.php -c /home/web/tmp/tenant.ini
+sudo php bin/install-tenant.php --pair XXXX-XXXX-XXXX-XXXX
 ```
 
-Существующий файл эта команда не перезаписывает.
-
-Обновить уже установленный Core:
+Неинтерактивный запуск:
 
 ```bash
-php bin/install-tenant.php --update USERNAME
-php bin/install-tenant.php -u USERNAME
+sudo php bin/install-tenant.php --pair XXXX-XXXX-XXXX-XXXX --user codex --yes
 ```
 
-Обновление обязано отказаться при изменённых tracked-файлах. При чистом дереве оно выполняет `git pull --ff-only`, повторно устанавливает production-зависимости, перезапускает и проверяет service. Персональный config, runtime-данные, Router и Telegram-привязки не изменяются.
+## Контракт установки
 
-INI-файл должен существовать и быть доступен на чтение. Владелец и режим файла не входят в контракт установщика:
+Инсталлер обязан:
 
-```ini
-username=<username>
-telegram_chat_id=<telegram_chat_id>
-transcription_api_key=<transcription_api_key>
-```
-
-## Контракт
-
-Установщик обязан:
-
-- принять единственным параметром путь к INI-файлу;
-- показывать без параметров и с `--help` usage, пример INI и `-c|--create PATH`;
-- по `-c|--create PATH` создавать новый INI-шаблон и отказываться перезаписывать существующий файл;
-- по `-u|--update USERNAME` проверять tracked-файлы Core, выполнять только fast-forward update, обновлять Composer-зависимости и перезапускать service;
-- отклонить несуществующий или нечитаемый файл, неизвестные или невалидные поля;
-- не передавать `transcription_api_key` в command-line arguments;
-- создать Linux-пользователя штатной командой ограниченного sudo;
-- клонировать `Datahider/Codex-Users-Core` из remote в `/home/USERNAME/Codex-Users-Core`;
-- установить production Composer-зависимости;
-- создать config с отдельным случайным `core_token`, переданным API key и `--dangerously-bypass-approvals-and-sandbox`;
-- записать в config закомментированные настройки порогов лимитов с фактическими значениями по умолчанию: `5%` для 5 часов и `1%` для 7 дней;
+- работать только от `root`;
+- принимать `--pair CODE`, необязательные `--user USERNAME` и `--yes`;
+- без `--user` спросить имя Linux-пользователя, по умолчанию `codex`;
+- создать обычного Linux-пользователя с `/home/USERNAME`, если его нет;
+- для существующего пользователя потребовать явное подтверждение, а в неинтерактивном режиме — `--yes`;
+- требовать стандартный home `/home/USERNAME`;
+- до погашения кода проверить `git`, `composer`, `codex`, `systemctl`, `runuser` и PHP 8.2+;
+- клонировать `Datahider/Codex-Users-Core` в `/home/USERNAME/Codex-Users-Core` и установить production Composer dependencies;
 - не копировать и не изменять Codex-авторизацию;
-- записать tenant и SHA-256 core token в production Router;
-- записать `TELEGRAM_CHAT_ID -> USERNAME` в production Transport-Telegram;
-- включить, перезапустить и проверить `codex-core@USERNAME.service`;
+- обменять pairing-код через `POST https://cdx-router.botmeister.ru/api/v1/core/install`;
+- не выводить и не передавать Core token в command-line arguments;
+- записать `/home/USERNAME/.codex-users-core/config.php` с режимом `0600` и владельцем `USERNAME`;
+- установить или обновить `/etc/systemd/system/codex-core@.service` из канонического шаблона инсталлера;
+- выполнить `systemctl daemon-reload`, `systemctl enable --now codex-core@USERNAME.service` и проверить `is-active`;
+- при ошибке после погашения pairing-кода явно сообщить, что нужен новый код;
 - завершаться при любой ошибке без fallback.
+
+Pairing-код погашается только после локальных проверок, клонирования Core и установки dependencies, но до создания config и запуска service.
+
+## Обновление
+
+```bash
+sudo php bin/install-tenant.php --update USERNAME
+```
+
+Обновление обязано отказаться при изменённых tracked-файлах, выполнить `git pull --ff-only`, обновить dependencies, повторно установить актуальный unit-шаблон, выполнить `daemon-reload`, перезапустить и проверить service. Config, runtime-данные и binding не изменяются.
