@@ -7,8 +7,8 @@ const ROUTER_INSTALL_URL = 'https://cdx-router.botmeister.ru/api/v1/core/install
 const CORE_REPOSITORY_URL = 'https://github.com/Datahider/Codex-Users-Core.git';
 const HELP = <<<'TEXT'
 Usage:
-  sudo php bin/install-tenant.php --pair CODE [--user USERNAME] [--yes]
-  sudo php bin/install-tenant.php --update USERNAME
+  sudo php bin/install-core.php --pair CODE [--user USERNAME] [--yes]
+  sudo php bin/install-core.php --update USERNAME
 
 Options:
   --pair CODE       One-time code from the CodexGate Telegram bot

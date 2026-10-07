@@ -3,23 +3,28 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-INSTALLER="$PROJECT_ROOT/bin/install-tenant.php"
+INSTALLER="$PROJECT_ROOT/bin/install-core.php"
+BOOTSTRAP="$PROJECT_ROOT/bin/install-core.sh"
 
 test -x "$INSTALLER"
 
 help="$($INSTALLER --help)"
-grep -Fq 'install-tenant.php --pair CODE' <<<"$help"
+grep -Fq 'install-core.php --pair CODE' <<<"$help"
 grep -Fq -- '--user USERNAME' <<<"$help"
 grep -Fq -- '--yes' <<<"$help"
-grep -Fq 'install-tenant.php --update USERNAME' <<<"$help"
+grep -Fq 'install-core.php --update USERNAME' <<<"$help"
 
 set +e
 no_args="$($INSTALLER 2>&1)"
 no_args_status=$?
 set -e
 test "$no_args_status" -ne 0
-grep -Fq 'install-tenant.php --pair CODE' <<<"$no_args"
-grep -Fq 'install-tenant.php --update USERNAME' <<<"$no_args"
+grep -Fq 'install-core.php --pair CODE' <<<"$no_args"
+grep -Fq 'install-core.php --update USERNAME' <<<"$no_args"
+
+test -x "$BOOTSTRAP"
+grep -Fq "installer_url='https://codexgate.ru/install-core.php'" "$BOOTSTRAP"
+grep -Fq 'php "$installer_file" "$@"' "$BOOTSTRAP"
 
 test -f "$PROJECT_ROOT/systemd/codex-core@.service"
 grep -Fq 'User=%i' "$PROJECT_ROOT/systemd/codex-core@.service"

@@ -7,13 +7,13 @@ Root-инсталлер single-user Core для CodexGate.
 Pairing-код выдаёт `@cdxgate_bot` после Start или `/install`. Код действует 3 часа.
 
 ```bash
-sudo php bin/install-tenant.php --pair XXXX-XXXX-XXXX-XXXX
+curl -fsSL https://codexgate.ru/install-core.sh | sudo sh -s -- --pair XXXX-XXXX-XXXX-XXXX
 ```
 
 Неинтерактивный запуск:
 
 ```bash
-sudo php bin/install-tenant.php --pair XXXX-XXXX-XXXX-XXXX --user codex --yes
+curl -fsSL https://codexgate.ru/install-core.sh | sudo sh -s -- --pair XXXX-XXXX-XXXX-XXXX --user codex --yes
 ```
 
 ## Контракт установки
@@ -42,7 +42,7 @@ Pairing-код погашается только после локальных �
 ## Обновление
 
 ```bash
-sudo php bin/install-tenant.php --update USERNAME
+sudo php bin/install-core.php --update USERNAME
 ```
 
 Обновление обязано отказаться при изменённых tracked-файлах, выполнить `git pull --ff-only`, обновить dependencies, повторно установить актуальный unit-шаблон, выполнить `daemon-reload`, перезапустить и проверить service. Config, runtime-данные и binding не изменяются.
