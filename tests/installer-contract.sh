@@ -4,7 +4,6 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER="$PROJECT_ROOT/bin/install-core.php"
-BOOTSTRAP="$PROJECT_ROOT/bin/install-core.sh"
 
 test -x "$INSTALLER"
 
@@ -21,10 +20,6 @@ set -e
 test "$no_args_status" -ne 0
 grep -Fq 'install-core.php --pair CODE' <<<"$no_args"
 grep -Fq 'install-core.php --update USERNAME' <<<"$no_args"
-
-test -x "$BOOTSTRAP"
-grep -Fq "installer_url='https://codexgate.ru/install-core.php'" "$BOOTSTRAP"
-grep -Fq 'php "$installer_file" "$@"' "$BOOTSTRAP"
 
 test -f "$PROJECT_ROOT/systemd/codex-core@.service"
 grep -Fq 'User=%i' "$PROJECT_ROOT/systemd/codex-core@.service"

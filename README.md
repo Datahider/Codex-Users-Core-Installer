@@ -7,13 +7,13 @@ Root-инсталлер single-user Core для CodexGate.
 Pairing-код выдаёт `@cdxgate_bot` после Start или `/install`. Код действует 3 часа.
 
 ```bash
-curl -fsSL https://codexgate.ru/install-core.sh | sudo sh -s -- --pair XXXX-XXXX-XXXX-XXXX
+curl -fsSL https://codexgate.ru/install-core.php.gz | gunzip | sudo php -- --pair XXXX-XXXX-XXXX-XXXX
 ```
 
 Неинтерактивный запуск:
 
 ```bash
-curl -fsSL https://codexgate.ru/install-core.sh | sudo sh -s -- --pair XXXX-XXXX-XXXX-XXXX --user codex --yes
+curl -fsSL https://codexgate.ru/install-core.php.gz | gunzip | sudo php -- --pair XXXX-XXXX-XXXX-XXXX --user codex --yes
 ```
 
 ## Контракт установки
